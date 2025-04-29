@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import numpy as np
+import netCDF4 as nc
 
 from dataclasses import dataclass, asdict, field
 
@@ -75,27 +76,6 @@ class Solution:
     Delta:     float = field(init=False)        # center
     zeta:      float = field(init=False)        # center
 
-def compute_fluxes(solution, parameters, grid, Fu, Fv):
-    u     = solution.u
-    v     = solution.v
-    h     = solution.h
-    zeta  = solution.zeta
-    Delta = solution.Delta
-    rheology_factor = solution.rheology_factor
-    
-    dx = grid.dx
-    
-    f  = parameters.f
-    r  = parameters.r
-    
-    rho_i = parameters.rho_i
-    
-    du = (D_cf((1.25*D_fc(u, dx) - Delta) * zeta, dx))*rheology_factor/(rho_i*A_cf(h)) + f*A_cf(v) - r*u + Fu
-    dv = (D_fc((D_cf(v, dx) * A_cf(zeta)), dx))*rheology_factor/(rho_i*h )             - f*A_fc(u) - r*v + Fv 
-
-    return np.hstack((du, dv))  
-
-
 def A_fc(u):
     return 0.5*(np.roll(u,-1) + u)
 
@@ -107,6 +87,34 @@ def D_fc(u, dx):
 
 def D_cf(v, dx):
     return (v - np.roll(v,1))/dx
+
+def create_netcdf_file(file_name, time, grid):
+    file = nc.Dataset(file_name, 'w')
+
+    file.title = 'Sea Ice 1D Model Data'
+    file.institution = 'University of Waterloo'
+
+    file.createDimension('t', time.num_plots)
+    file.createDimension('xf', grid.Nx)
+    file.createDimension('xc', grid.Nx)
+
+    t  = file.createVariable('t',  np.float32, ('t',))
+    xf = file.createVariable('xf', np.float32, ('xf',))
+    xc = file.createVariable('xc', np.float32, ('xc',))
+    u  = file.createVariable('u',  np.float32, ('t', 'xf'))
+    v  = file.createVariable('v',  np.float32, ('t', 'xc'))
+
+    t.units = 'seconds'
+    xf.units = 'meters'
+    xc.units = 'meters'
+    u.units = 'meters/second'
+    v.units = 'meters/second'
+
+    t[:]  = time.times_plot
+    xf[:] = grid.xf
+    xc[:] = grid.xc
+
+    return u, v
 
 def plot_solution(solution, grid, parameters, t):
     
