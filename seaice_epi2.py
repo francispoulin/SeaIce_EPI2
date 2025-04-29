@@ -4,14 +4,13 @@ import numpy as np
 import scipy as sp
 import matplotlib.pyplot as plt
 
-import netCDF4 as nc
+from src.functions import A_fc, A_cf, D_fc, D_cf
+from src.functions import Parameters, Grid, Time
+from src.functions import meters, km
+from src.functions import seconds, minutes, hours, weeks
+from src.functions import create_netcdf_file
 
-from functions import A_fc, A_cf, D_fc, D_cf
-from functions import Parameters, Grid, Time
-from functions import meters, km
-from functions import seconds, minutes, hours, weeks
-
-from epi2_serial import epi2_step
+from src.epi2_serial import epi2_step
 
 # --- Define structures for parameters, grid and time
 parameters = Parameters(max_Fu = 1e-4, max_Fv = 0e-4)
@@ -38,8 +37,8 @@ def rhs(Q):
     A  = A0
     
     Delta = np.sqrt(1.25*A_fc(D_fc(u, dx))**2 + D_cf(v, dx)**2) + parameters.Delta_ref*1e-2 
-    Pp = h*P_star*e**(C0*(A - 1))
-    zeta = A_cf(Pp)/(2*Delta_ref)*np.tanh(Delta_ref/A_cf(Delta))
+    Pp    = h*P_star*e**(C0*(A - 1))
+    zeta  = A_cf(Pp)/(2*Delta_ref)*np.tanh(Delta_ref/A_cf(Delta))
             
     du = (D_cf((1.25*D_fc(u, dx) - Delta) * zeta, dx))/(rho_i*A_cf(h)) + f*A_cf(v) - r*u + Fu
     dv = (D_fc((D_cf(v, dx) * A_cf(zeta)), dx))/(rho_i*h )             - f*A_fc(u) - r*v + Fv 
@@ -47,38 +46,13 @@ def rhs(Q):
     return np.hstack((du, dv))  
 
 # --- Create a netcdf file 
+
 file_name = 'seaice_uv.nc'
-
-file = nc.Dataset('seaice_uv.nc', 'w')
-
-file.title = 'Sea Ice 1D Model Data'
-file.institution = 'University of Waterloo'
-
-file.createDimension('t', time.num_plots)
-file.createDimension('xf', grid.Nx)
-file.createDimension('xc', grid.Nx)
-
-t  = file.createVariable('t',  np.float32, ('t',))
-xf = file.createVariable('xf', np.float32, ('xf',))
-xc = file.createVariable('xc', np.float32, ('xc',))
-u  = file.createVariable('u',  np.float32, ('t', 'xf'))
-v  = file.createVariable('v',  np.float32, ('t', 'xc'))
-
-t.units = 'seconds'
-xf.units = 'meters'
-xc.units = 'meters'
-u.units = 'meters/second'
-v.units = 'meters/second'
-
-t[:]  = time.times_plot
-xf[:] = grid.xf
-xc[:] = grid.xc
+u, v = create_netcdf_file(file_name, time, grid)
 
 # --- Initial Conditions
-u0 = np.zeros(grid.Nx)
-v0 = np.zeros(grid.Nx)
-h0 = np.ones(grid.Nx)
-A0 = np.ones(grid.Nx)
+u0, v0 = np.zeros(grid.Nx), np.zeros(grid.Nx)
+h0, A0 = np.ones(grid.Nx), np.ones(grid.Nx)
 
 Q0 = np.hstack((u0, v0)) 
 Q = Q0.copy()
