@@ -19,7 +19,6 @@ time       = Time(dt = 0.05*seconds, tfinal = 0.1*hours, dt_save = 10*seconds)
 
 # --- Define the RHS of the PDEs
 def rhs(Q):
-    
     Nx, dx = grid.Nx, grid.dx
     
     P_star    = parameters.P_star
@@ -46,7 +45,6 @@ def rhs(Q):
     return np.hstack((du, dv))  
 
 # --- Create a netcdf file 
-
 file_name = 'seaice_uv.nc'
 u, v = create_netcdf_file(file_name, time, grid)
 
@@ -67,6 +65,7 @@ for i in range(time.Nt-1):
     
     Q = epi2_step(Q, rhs, time.dt)
 
+    # --- Save data
     if np.remainder(i, (time.freq_save-1)) == 0:
         print('t = {:6.2f} hours, max_u = {:10.8f}, max_v = {:10.8f}'.format(i*time.dt/hours, 
               np.max(Q[0:grid.Nx]), np.max(Q[grid.Nx:2*grid.Nx])))        
