@@ -114,7 +114,7 @@ def create_netcdf_file(file_name, time, grid):
     xf[:] = grid.xf
     xc[:] = grid.xc
 
-    return u, v
+    return file, u, v
 
 def plot_solution(solution, grid, parameters, t):
     

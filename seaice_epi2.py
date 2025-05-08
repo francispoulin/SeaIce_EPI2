@@ -2,7 +2,13 @@
 
 import numpy as np 
 import scipy as sp
+import netCDF4 as nc
 import matplotlib.pyplot as plt
+
+from mpi4py import MPI
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
+size = comm.Get_size()
 
 from src.functions import A_fc, A_cf, D_fc, D_cf
 from src.functions import Parameters, Grid, Time
@@ -11,6 +17,7 @@ from src.functions import seconds, minutes, hours, weeks
 from src.functions import create_netcdf_file
 
 from src.epi2_serial import epi2_step
+from src.epi2_serial import epi2_step_parallel
 
 # --- Define structures for parameters, grid and time
 parameters = Parameters(max_Fu = 1e-4, max_Fv = 0e-4)
@@ -44,9 +51,12 @@ def rhs(Q):
 
     return np.hstack((du, dv))  
 
-# --- Create a netcdf file 
+# --- Create a netcdf file (only on rank 0)
 file_name = 'seaice_uv.nc'
-u, v = create_netcdf_file(file_name, time, grid)
+if rank == 0:
+    file, u, v = create_netcdf_file(file_name, time, grid)
+else:
+    file, u, v = None, None, None
 
 # --- Initial Conditions
 u0, v0 = np.zeros(grid.Nx), np.zeros(grid.Nx)
@@ -63,39 +73,43 @@ Fv = np.cos(2*np.pi*grid.xc/grid.Lx) * parameters.max_Fv
 count = 1
 for i in range(time.Nt-1):
     
-    Q = epi2_step(Q, rhs, time.dt)
+    # Use the parallel version with MPI
+    Q = epi2_step_parallel(Q, rhs, time.dt, comm=comm)
 
-    # --- Save data
-    if np.remainder(i, (time.freq_save-1)) == 0:
+    # --- Save data (only on rank 0)
+    if rank == 0 and np.remainder(i, (time.freq_save-1)) == 0:
         print('t = {:6.2f} hours, max_u = {:10.8f}, max_v = {:10.8f}'.format(i*time.dt/hours, 
               np.max(Q[0:grid.Nx]), np.max(Q[grid.Nx:2*grid.Nx])))        
         u[count,:] = Q[0:grid.Nx]
         v[count,:] = Q[grid.Nx:2*grid.Nx]
         count+=1
         
-file.close()
+# Close file and create plots only on rank 0
+if rank == 0:
+    file.close()
 
-# --- Plot the solution
-ds = nc.Dataset(file_name)
+    # --- Plot the solution
+    ds = nc.Dataset(file_name)
 
-plt.clf()
-fig, axs = plt.subplots(1, 2, figsize=(20,8))
+    plt.clf()
+    fig, axs = plt.subplots(1, 2, figsize=(20,8))
 
-fig.suptitle('1D Sea Ice Model with ROS2: h, A fixed')
+    fig.suptitle('1D Sea Ice Model with ROS2: h, A fixed')
 
-uplt = axs[0].pcolormesh(grid.xf/km, time.times_plot/hours, ds['u']) #, vmin=-1.7, vmax=1.7)
-vplt = axs[1].pcolormesh(grid.xc/km, time.times_plot/hours, ds['v']) #, vmin=-1.7, vmax=1.7)
+    uplt = axs[0].pcolormesh(grid.xf/km, time.times_plot/hours, ds['u']) #, vmin=-1.7, vmax=1.7)
+    vplt = axs[1].pcolormesh(grid.xc/km, time.times_plot/hours, ds['v']) #, vmin=-1.7, vmax=1.7)
 
-axs[0].set_title('u')
-axs[1].set_title('v')
+    axs[0].set_title('u')
+    axs[1].set_title('v')
 
-axs[0].set_xlabel('x (km)')
-axs[1].set_xlabel('x (km)')
+    axs[0].set_xlabel('x (km)')
+    axs[1].set_xlabel('x (km)')
 
-axs[0].set_ylabel('time (hours)')
-axs[1].set_ylabel('time (hours)')
+    axs[0].set_ylabel('time (hours)')
+    axs[1].set_ylabel('time (hours)')
 
-fig.colorbar(uplt, ax=axs[0])
-fig.colorbar(vplt, ax=axs[1])
+    fig.colorbar(uplt, ax=axs[0])
+    fig.colorbar(vplt, ax=axs[1])
 
-fig.savefig('uv_seaice.png', format = 'png', facecolor='white')
+    fig.savefig('uv_seaice.png', format = 'png', facecolor='white')
+    print("Finished! Results saved to", file_name, "and visualization to uv_seaice.png")
