@@ -650,22 +650,81 @@ def serial_rhs(Q):
 
     return np.hstack((du, dv))  
 
-def verify_rhs_function():
-    """Verify that parallel RHS matches serial with 1 processor."""
-    if size != 1 or rank != 0:
+def verification():
+    """
+    Compare parallel_D_fc/cf and parallel_A_fc/cf against serial implementations.
+    Should be run with size = 1 only.
+    """
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+
+    if size != 1:
+        if rank == 0:
+            print("⚠️  Skipping verification: run with only 1 process (mpirun -n 1) to test operators.")
         return
-    
-    # Create test solution
-    test_Q = np.hstack((np.sin(np.linspace(0, 2*np.pi, grid.Nx)), 
-                        np.cos(np.linspace(0, 2*np.pi, grid.Nx))))
-    
-    # Compute with both functions
-    serial_result = serial_rhs(test_Q)
-    parallel_result = parallel_rhs(test_Q, comm, counts, displs)
-    
-    # Compare results
-    max_diff = np.max(np.abs(serial_result - parallel_result))
-    print(f"RHS function maximum difference: {max_diff}")
+
+    if rank == 0:
+        print("✅ Verifying parallel spatial operators against serial reference...")
+        
+        dx = grid.dx
+        xf = grid.xf
+        xc = grid.xc
+        Nx = grid.Nx
+        Lx = grid.Lx
+
+        # Test data
+        u_face = np.sin(2 * np.pi * xf / Lx)
+        v_center = np.cos(2 * np.pi * xc / Lx)
+
+        # Serial reference (periodic)
+        def D_fc_ref(u): return (np.roll(u, -1) - u) / dx
+        def D_cf_ref(v): return (v - np.roll(v, 1)) / dx
+        def A_fc_ref(u): return 0.5 * (u + np.roll(u, -1))
+        def A_cf_ref(v): return 0.5 * (v + np.roll(v, 1))
+
+        # Parallel evaluated (your actual operator calls)
+        # Use placeholder counts/displs assuming single processor
+        counts, displs = decompose_domain(grid.Nx, size)
+        dummy_counts = counts
+        dummy_displs = displs
+
+        # Because ghost exchange needs "local" arrays, extract local values
+        u_local = u_face
+        v_local = v_center
+
+        D_fc_out = parallel_D_fc(u_local, dx, comm, dummy_counts, dummy_displs)
+        D_cf_out = parallel_D_cf(v_local, dx, comm, dummy_counts, dummy_displs)
+        A_fc_out = parallel_A_fc(u_local, comm, dummy_counts, dummy_displs)
+        A_cf_out = parallel_A_cf(v_local, comm, dummy_counts, dummy_displs)
+
+        D_fc_true = D_fc_ref(u_face)
+        D_cf_true = D_cf_ref(v_center)
+        A_fc_true = A_fc_ref(u_face)
+        A_cf_true = A_cf_ref(v_center)
+
+        def max_err(a, b): return np.max(np.abs(a - b))
+
+        err_D_fc = max_err(D_fc_out, D_fc_true)
+        err_D_cf = max_err(D_cf_out, D_cf_true)
+        err_A_fc = max_err(A_fc_out, A_fc_true)
+        err_A_cf = max_err(A_cf_out, A_cf_true)
+
+        print(f"🔬 max |D_fc - ref| = {err_D_fc:.2e}")
+        print(f"🔬 max |D_cf - ref| = {err_D_cf:.2e}")
+        print(f"🔬 max |A_fc - ref| = {err_A_fc:.2e}")
+        print(f"🔬 max |A_cf - ref| = {err_A_cf:.2e}")
+
+        tol = 1e-12
+        passed = all(err < tol for err in [err_D_fc, err_D_cf, err_A_fc, err_A_cf])
+
+        if passed:
+            print("✅ All spatial operators match serial references (within tolerance).")
+        else:
+            if err_D_fc >= tol: print(" → D_fc failed")
+            if err_D_cf >= tol: print(" → D_cf failed")
+            if err_A_fc >= tol: print(" → A_fc failed")
+            if err_A_cf >= tol: print(" → A_cf failed")
+
 
 # ---- Main Program ----
 # Define structures for parameters, grid and time
@@ -696,7 +755,6 @@ Fv_local = np.cos(2*np.pi*xc_local/grid.Lx) * parameters.max_Fv if Nx_local > 0 
 Q0_local = np.hstack((u0_local, v0_local))
 Q_local = Q0_local.copy()
 
-verify_rhs_function()
 
 # Create output file (rank 0 only)
 if rank == 0:
@@ -704,6 +762,8 @@ if rank == 0:
     file, u_global, v_global = create_netcdf_file(file_name, time, grid)
 else:
     file, u_global, v_global = None, None, None
+
+verification()
 
 # Time stepping loop
 count = 1
