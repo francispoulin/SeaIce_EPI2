@@ -9,6 +9,10 @@ import math
 from mpi4py import MPI
 import pdb
 
+#FJP for testing
+from src.epi2_serial import epi2_step_serial
+from src.functions import A_fc, A_cf, D_fc, D_cf
+
 # Initialize MPI
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -17,14 +21,14 @@ size = comm.Get_size()
 # ---- Utility constants and functions ----
 # Distance units
 meters = 1.0
-km = 1000.0
+km     = 1000.0
 
 # Time units
 seconds = 1.0
 minutes = 60.0
-hours = 60.0 * minutes
-days = 24.0 * hours
-weeks = 7.0 * days
+hours   = 60.0 * minutes
+days    = 24.0 * hours
+weeks   = 7.0  * days
 
 # Define Parameter, Grid, and Time classes
 class Parameters:
@@ -109,7 +113,7 @@ def exchange_ghosts(local_array, comm, left_rank, right_rank):
     return extended
 
 # ---- Parallel Derivative Functions ----
-def parallel_D_fc(u_local, dx, comm, counts, displs):
+def D_fc_mpi(u_local, dx, comm, counts, displs):
     """Forward difference operation (face to cell) with periodic boundaries."""
     rank = comm.Get_rank()
     size = comm.Get_size()
@@ -121,7 +125,7 @@ def parallel_D_fc(u_local, dx, comm, counts, displs):
         
     return (np.roll(u_local,-1) - u_local)/dx
 
-def parallel_D_cf(u_local, dx, comm, counts, displs):
+def D_cf_mpi(u_local, dx, comm, counts, displs):
     """Centered difference operation (cell to face) with periodic boundaries."""
     rank = comm.Get_rank()
     size = comm.Get_size()
@@ -133,7 +137,7 @@ def parallel_D_cf(u_local, dx, comm, counts, displs):
         
     return (u_local - np.roll(u_local,1))/dx
 
-def parallel_A_fc(u_local, comm, counts, displs):
+def A_fc_mpi(u_local, comm, counts, displs):
     """Parallel averaging operation (face to cell) with periodic boundaries."""
     rank = comm.Get_rank()
     size = comm.Get_size()
@@ -145,7 +149,7 @@ def parallel_A_fc(u_local, comm, counts, displs):
         
     return (np.roll(u_local,-1) + u_local)/2.
 
-def parallel_A_cf(u_local, comm, counts, displs):
+def A_cf_mpi(u_local, comm, counts, displs):
     """Parallel averaging operation (cell to face) with periodic boundaries."""
     rank = comm.Get_rank()
     size = comm.Get_size()
@@ -158,7 +162,7 @@ def parallel_A_cf(u_local, comm, counts, displs):
     return (u_local + np.roll(u_local,1))/2.
 
 # ---- Parallel KIOPS Implementation ----
-def parallel_kiops(tau_out, A, u_local, comm, tol=1e-7, m_init=10, mmin=10, mmax=128, iop=2, task1=False):
+def kiops_mpi(tau_out, A, u_local, comm, tol=1e-7, m_init=10, mmin=10, mmax=128, iop=2, task1=False):
     """
     Parallel KIOPS with domain decomposition.
     """
@@ -399,12 +403,12 @@ def parallel_kiops(tau_out, A, u_local, comm, tol=1e-7, m_init=10, mmin=10, mmax
     return w_local, stats
 
 # ---- Parallel EPI2 Step ----
-def parallel_epi2_step(Q_local, rhs_func_local, dt, comm, counts, displs, tol=1e-7, mmin=10, mmax=64):
+def epi2_step_mpi(Q_local, rhs_func_local, dt, comm, counts, displs, tol=1e-7, mmin=10, mmax=64):
     """
     Parallel EPI2 step with domain decomposition.
     """
-    if not hasattr(parallel_epi2_step, 'krylov_size'):
-        parallel_epi2_step.krylov_size = mmin
+    if not hasattr(epi2_step_mpi, 'krylov_size'):
+        epi2_step_mpi.krylov_size = mmin
     
     # Ensure Q_local is real
     Q_local = np.real(Q_local)  # <-- Add this conversion
@@ -413,7 +417,7 @@ def parallel_epi2_step(Q_local, rhs_func_local, dt, comm, counts, displs, tol=1e
     rhsQ_local = rhs_func_local(Q_local, comm, counts, displs)
     
     # Define parallel matvec function
-    def parallel_matvec(v_local):
+    def matvec_mpi(v_local):
         epsilon = math.sqrt(np.finfo(float).eps)
         
         # Reconstruct perturbed Q on local domain
@@ -429,13 +433,13 @@ def parallel_epi2_step(Q_local, rhs_func_local, dt, comm, counts, displs, tol=1e
     vec_local[1, :] = rhsQ_local.flatten()
     
     # Call parallel KIOPS
-    phiv_local, stats = parallel_kiops([1.], parallel_matvec, vec_local, comm, 
-                                     tol=tol, m_init=parallel_epi2_step.krylov_size, 
+    phiv_local, stats = kiops_mpi([1.], matvec_mpi, vec_local, comm, 
+                                     tol=tol, m_init=epi2_step_mpi.krylov_size, 
                                      mmin=mmin, mmax=mmax)
     
     # Update Krylov size based on statistics
     used_m = stats[5]
-    parallel_epi2_step.krylov_size = math.floor(0.7 * used_m + 0.3 * parallel_epi2_step.krylov_size)
+    epi2_step_mpi.krylov_size = math.floor(0.7 * used_m + 0.3 * epi2_step_mpi.krylov_size)
     
     # Update local solution
     deltaQ_local = np.reshape(phiv_local, Q_local.shape) * dt
@@ -444,7 +448,7 @@ def parallel_epi2_step(Q_local, rhs_func_local, dt, comm, counts, displs, tol=1e
     return np.real(Q_local + deltaQ_local)  # <-- Add np.real here
 
 # ---- Define parallel RHS function ----
-def parallel_rhs(Q_local, comm, counts, displs):
+def rhs_parallel(Q_local, comm, counts, displs):
     """Parallel version of RHS function with domain decomposition."""
     # Ensure Q_local is real if we might be getting complex values
     Q_local = np.real(Q_local)  # <-- Add this conversion
@@ -474,32 +478,32 @@ def parallel_rhs(Q_local, comm, counts, displs):
     A_local = A0_local
     
     # Compute derivatives using parallel functions
-    Du_local = parallel_D_fc(u_local, dx, comm, counts, displs)
-    Dv_local = parallel_D_cf(v_local, dx, comm, counts, displs)
+    Du_local = D_fc_mpi(u_local, dx, comm, counts, displs)
+    Dv_local = D_cf_mpi(v_local, dx, comm, counts, displs)
     
     # Compute Delta using parallel operations
-    AFc_Du_local = parallel_A_fc(Du_local, comm, counts, displs)
+    AFc_Du_local = A_fc_mpi(Du_local, comm, counts, displs)
     Delta_local = np.sqrt(1.25*AFc_Du_local**2 + Dv_local**2) + parameters.Delta_ref*1e-2
     
     # Compute pressure
     Pp_local = h_local*P_star*np.exp(C0*(A_local - 1))
     
     # Compute zeta
-    ACf_Pp_local = parallel_A_cf(Pp_local, comm, counts, displs)
-    ACf_Delta_local = parallel_A_cf(Delta_local, comm, counts, displs)
+    ACf_Pp_local = A_cf_mpi(Pp_local, comm, counts, displs)
+    ACf_Delta_local = A_cf_mpi(Delta_local, comm, counts, displs)
     zeta_local = ACf_Pp_local/(2*Delta_ref)*np.tanh(Delta_ref/ACf_Delta_local)
     
     # Compute du and dv
     term1 = (1.25*Du_local - Delta_local) * zeta_local
-    DCf_term1 = parallel_D_cf(term1, dx, comm, counts, displs)
-    ACf_h_local = parallel_A_cf(h_local, comm, counts, displs)
-    ACf_v_local = parallel_A_cf(v_local, comm, counts, displs)
+    DCf_term1 = D_cf_mpi(term1, dx, comm, counts, displs)
+    ACf_h_local = A_cf_mpi(h_local, comm, counts, displs)
+    ACf_v_local = A_cf_mpi(v_local, comm, counts, displs)
     du_local = DCf_term1/(rho_i*ACf_h_local) + f*ACf_v_local - r*u_local + Fu_local
     
-    ACf_zeta_local = parallel_A_cf(zeta_local, comm, counts, displs)
+    ACf_zeta_local = A_cf_mpi(zeta_local, comm, counts, displs)
     term2 = Dv_local * ACf_zeta_local
-    DFc_term2 = parallel_D_fc(term2, dx, comm, counts, displs)
-    AFc_u_local = parallel_A_fc(u_local, comm, counts, displs)
+    DFc_term2 = D_fc_mpi(term2, dx, comm, counts, displs)
+    AFc_u_local = A_fc_mpi(u_local, comm, counts, displs)
     dv_local = DFc_term2/(rho_i*h_local) - f*AFc_u_local - r*v_local + Fv_local
     
     # Combine results
@@ -540,7 +544,7 @@ def serial_rhs(Q):
 
 def verification():
     """
-    Compare parallel_D_fc/cf and parallel_A_fc/cf against serial implementations.
+    Compare D_fc_/cf_mpi and A_fc/cf_mpi against serial implementations.
     Should be run with size = 1 only.
     """
     rank = comm.Get_rank()
@@ -580,10 +584,10 @@ def verification():
         u_local = u_face
         v_local = v_center
 
-        D_fc_out = parallel_D_fc(u_local, dx, comm, dummy_counts, dummy_displs)
-        D_cf_out = parallel_D_cf(v_local, dx, comm, dummy_counts, dummy_displs)
-        A_fc_out = parallel_A_fc(u_local, comm, dummy_counts, dummy_displs)
-        A_cf_out = parallel_A_cf(v_local, comm, dummy_counts, dummy_displs)
+        D_fc_out = D_fc_mpi(u_local, dx, comm, dummy_counts, dummy_displs)
+        D_cf_out = D_cf_mpi(v_local, dx, comm, dummy_counts, dummy_displs)
+        A_fc_out = A_fc_mpi(u_local, comm, dummy_counts, dummy_displs)
+        A_cf_out = A_cf_mpi(v_local, comm, dummy_counts, dummy_displs)
 
         D_fc_true = D_fc_ref(u_face)
         D_cf_true = D_cf_ref(v_center)
@@ -613,11 +617,39 @@ def verification():
             if err_A_fc >= tol: print(" → A_fc failed")
             if err_A_cf >= tol: print(" → A_cf failed")
 
+#FJP for testing
+def rhs_serial(Q):
+    Nx, dx = grid.Nx, grid.dx
+    
+    P_star    = parameters.P_star
+    e         = parameters.e
+    C0        = parameters.C0
+    Delta_ref = parameters.Delta_ref
+
+    f     = parameters.f
+    r     = parameters.r
+    rho_i = parameters.rho_i
+
+    u  = Q[0:Nx]
+    v  = Q[Nx:2*Nx]
+    h  = h0
+    A  = A0
+    
+    Delta = np.sqrt(1.25*A_fc(D_fc(u, dx))**2 + D_cf(v, dx)**2) + parameters.Delta_ref*1e-2 
+    Pp    = h*P_star*e**(C0*(A - 1))
+    zeta  = A_cf(Pp)/(2*Delta_ref)*np.tanh(Delta_ref/A_cf(Delta))
+            
+    du = (D_cf((1.25*D_fc(u, dx) - Delta) * zeta, dx))/(rho_i*A_cf(h)) + f*A_cf(v) - r*u + Fu
+    dv = (D_fc((D_cf(v, dx) * A_cf(zeta)), dx))/(rho_i*h )             - f*A_fc(u) - r*v + Fv 
+
+    return np.hstack((du, dv)), Delta, Pp, zeta  
+
+
 # ---- Main Program ----
 # Define structures for parameters, grid and time
 parameters = Parameters(max_Fu = 1e-4, max_Fv = 0e-4)
-grid = Grid(Nx = 10)
-time = Time(dt = 0.05*seconds, tfinal = 0.1*hours, dt_save = 10*seconds)
+grid       = Grid(Nx = 10)
+time       = Time(dt = 0.05*seconds, tfinal = seconds, dt_save = 0.05*seconds)
 
 # Decompose domain
 counts, displs = decompose_domain(grid.Nx, size)
@@ -625,14 +657,12 @@ Nx_local = counts[rank]
 
 # Create local grid
 local_indices = np.arange(displs[rank], displs[rank] + counts[rank])
-xc_local = grid.xc[local_indices] if Nx_local > 0 else np.array([])
-xf_local = grid.xf[local_indices] if Nx_local > 0 else np.array([])
+xc_local      = grid.xc[local_indices] if Nx_local > 0 else np.array([])
+xf_local      = grid.xf[local_indices] if Nx_local > 0 else np.array([])
 
 # Initial Conditions - local portions
-u0_local = np.zeros(Nx_local)
-v0_local = np.zeros(Nx_local)
-h0_local = np.ones(Nx_local)
-A0_local = np.ones(Nx_local)
+u0_local, v0_local = np.zeros(Nx_local), np.zeros(Nx_local)
+h0_local, A0_local = np.ones(Nx_local),  np.ones(Nx_local)
 
 # Local forcing terms
 Fu_local = np.sin(2*np.pi*xf_local/grid.Lx) * parameters.max_Fu if Nx_local > 0 else np.array([])
@@ -640,8 +670,7 @@ Fv_local = np.cos(2*np.pi*xc_local/grid.Lx) * parameters.max_Fv if Nx_local > 0 
 
 # Combined local solution vector
 Q0_local = np.hstack((u0_local, v0_local))
-Q_local = Q0_local.copy()
-
+Q_local  = Q0_local.copy()
 
 # Create output file (rank 0 only)
 if rank == 0:
@@ -652,24 +681,48 @@ else:
 
 verification()
 
+#FJP compare serial and parallel (1 core)
+# --- Initial Conditions
+
+if rank==0:
+    u0, v0 = np.zeros(grid.Nx), np.zeros(grid.Nx)
+    h0, A0 = np.ones(grid.Nx), np.ones(grid.Nx)
+
+    Q0 = np.hstack((u0, v0)) 
+    Q = Q0.copy()
+
+    # --- Pick forcing
+    Fu = np.sin(2*np.pi*grid.xf/grid.Lx) * parameters.max_Fu 
+    Fv = np.cos(2*np.pi*grid.xc/grid.Lx) * parameters.max_Fv 
+
+    Q, Delta, Pp, zeta = rhs_serial(Q0)
+
+    print("Serial = ", Q)
+
+Q_local = rhs_parallel(Q0_local, comm, counts, displs)
+
+if rank == 0:
+    print("Parallel = ", Q_local)
+    print("Diff     = ", Q_local - Q)
+
+import sys
+sys.exit()
+
 # Time stepping loop
 count = 1
 for i in range(time.Nt-1):
     # Take parallel EPI2 step
-    Q_local = parallel_epi2_step(Q_local, parallel_rhs, time.dt, comm, counts, displs)
+    Q_local = epi2_step_mpi(Q_local, rhs_parallel, time.dt, comm, counts, displs)
     
     # Save data (gather to rank 0) - FIXED SAVE CONDITION
     if np.remainder(i, time.freq_save) == 0:  # <-- REMOVED the -1
         # Gather u and v to rank 0
-        u_local = Q_local[:Nx_local]
-        v_local = Q_local[Nx_local:2*Nx_local]
+        u_local, v_local = Q_local[:Nx_local], Q_local[Nx_local:2*Nx_local]
         
-        u_gathered = None
-        v_gathered = None
+        u_gathered, v_gathered = None, None
         
         if rank == 0:
-            u_gathered = np.zeros(grid.Nx)
-            v_gathered = np.zeros(grid.Nx)
+            u_gathered, v_gathered = np.zeros(grid.Nx), np.zeros(grid.Nx)
         
         # Gather data to rank 0
         comm.Gatherv(u_local, [u_gathered, counts, displs, MPI.DOUBLE], root=0)
