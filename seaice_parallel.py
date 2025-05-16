@@ -697,13 +697,21 @@ if rank==0:
 
     Q, Delta, Pp, zeta = rhs_serial(Q0)
 
-    print("Serial = ", Q)
-
 Q_local = rhs_parallel(Q0_local, comm, counts, displs)
 
-if rank == 0:
-    print("Parallel = ", Q_local)
-    print("Diff     = ", Q_local - Q)
+def max_err(a, b): return np.max(np.abs(a - b))
+
+if rank==0:
+    err_rhs = max_err(Q_local, Q)
+    tol = 1e-12
+    passed = all(err < tol for err in [err_rhs])
+
+    print(f"🔬 max |rhs_mpi - rhs_serial| = {err_rhs:.2e}")
+
+    if passed:
+        print("✅ RHS operators match serial references (within tolerance).")
+    else:
+        print(" → rhs failed")
 
 import sys
 sys.exit()
