@@ -111,5 +111,5 @@ if rank == 0:
     fig.colorbar(uplt, ax=axs[0])
     fig.colorbar(vplt, ax=axs[1])
 
-    fig.savefig('uv_seaice.png', format = 'png', facecolor='white')
-    print("Finished! Results saved to", file_name, "and visualization to uv_seaice.png")
+    fig.savefig('uv_seaice_serial.png', format = 'png', facecolor='white')
+    print("Finished! Results saved to", file_name, "and visualization to uv_seaice_serial.png")

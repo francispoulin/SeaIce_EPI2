@@ -93,181 +93,69 @@ def exchange_ghosts(local_array, comm, left_rank, right_rank):
     rank = comm.Get_rank()
     size = comm.Get_size()
     
-    # Prepare to exchange ghost cells
-    if rank == 0:  # Leftmost processor
-        # Only add ghost on the right
-        extended = np.zeros(local_array.size + 1)
-        extended[:-1] = local_array
+    extended = np.zeros(local_array.size + 2)
+    extended[1:-1] = local_array
         
-        # Send to right, receive from right
-        send_right = local_array[-1]
-        recv_right = comm.sendrecv(send_right, dest=right_rank, source=right_rank)
-        extended[-1] = recv_right
-            
-    elif rank == size - 1:  # Rightmost processor
-        # Only add ghost on the left
-        extended = np.zeros(local_array.size + 1)
-        extended[1:] = local_array
+    # Send right, receive from left
+    send_right = local_array[-1]
+    recv_left = comm.sendrecv(send_right, dest=right_rank, source=left_rank)
+    extended[0] = recv_left
         
-        # Send to left, receive from left
-        send_left = local_array[0]
-        recv_left = comm.sendrecv(send_left, dest=left_rank, source=left_rank)
-        extended[0] = recv_left
-            
-    else:  # Interior processor
-        # Add ghosts on both sides
-        extended = np.zeros(local_array.size + 2)
-        extended[1:-1] = local_array
-        
-        # Send right, receive from left
-        send_right = local_array[-1]
-        recv_left = comm.sendrecv(send_right, dest=right_rank, source=left_rank)
-        extended[0] = recv_left
-        
-        # Send left, receive from right
-        send_left = local_array[0]
-        recv_right = comm.sendrecv(send_left, dest=left_rank, source=right_rank)
-        extended[-1] = recv_right
-            
+    # Send left, receive from right
+    send_left = local_array[0]
+    recv_right = comm.sendrecv(send_left, dest=left_rank, source=right_rank)
+    extended[-1] = recv_right
+
     return extended
 
 # ---- Parallel Derivative Functions ----
 def parallel_D_fc(u_local, dx, comm, counts, displs):
-    """Forward difference with parallel ghost exchange and periodic boundaries."""
+    """Forward difference operation (face to cell) with periodic boundaries."""
     rank = comm.Get_rank()
     size = comm.Get_size()
     
-    # Set up periodic boundary conditions
-    left_rank = rank - 1 if rank > 0 else size - 1  # Wrap to last processor
+    left_rank  = rank - 1 if rank > 0 else size - 1  # Wrap to last processor
     right_rank = rank + 1 if rank < size - 1 else 0  # Wrap to first processor
     
-    # Exchange ghost cells
     u_extended = exchange_ghosts(u_local, comm, left_rank, right_rank)
-    
-    # Compute local derivatives
-    du_local = np.zeros_like(u_local)
-    
-    if rank == 0:  # Leftmost processor
-        # One ghost on right (periodic from last processor)
-        for i in range(u_local.size):
-            next_val = u_extended[-1] if i == u_local.size - 1 else u_local[i+1]
-            du_local[i] = (next_val - u_local[i]) / dx
-            
-    elif rank == size - 1:  # Rightmost processor
-        # One ghost on left, and rightmost point wraps to leftmost processor
-        for i in range(u_local.size):
-            next_val = u_extended[-1] if i == u_local.size - 1 else u_local[i+1]
-            du_local[i] = (next_val - u_local[i]) / dx
-            
-    else:  # Interior processor
-        # Ghosts on both sides
-        for i in range(u_local.size):
-            next_val = u_extended[-1] if i == u_local.size - 1 else u_local[i+1]
-            du_local[i] = (next_val - u_local[i]) / dx
-    
-    return du_local
+        
+    return (np.roll(u_local,-1) - u_local)/dx
 
 def parallel_D_cf(u_local, dx, comm, counts, displs):
-    """Centered difference with parallel ghost exchange and periodic boundaries."""
+    """Centered difference operation (cell to face) with periodic boundaries."""
     rank = comm.Get_rank()
     size = comm.Get_size()
     
-    # Set up periodic boundary conditions
-    left_rank = rank - 1 if rank > 0 else size - 1  # Wrap to last processor
+    left_rank  = rank - 1 if rank > 0 else size - 1  # Wrap to last processor
     right_rank = rank + 1 if rank < size - 1 else 0  # Wrap to first processor
     
-    # Exchange ghost cells
     u_extended = exchange_ghosts(u_local, comm, left_rank, right_rank)
-    
-    # Compute local derivatives
-    du_local = np.zeros_like(u_local)
-    
-    if rank == 0:  # Leftmost processor
-        for i in range(u_local.size):
-            if i == 0:
-                # First point uses left ghost (from last processor)
-                du_local[i] = (u_local[i] - u_extended[0]) / dx
-            else:
-                # Other points use centered difference
-                du_local[i] = (u_local[i] - u_local[i-1]) / dx
-                
-    elif rank == size - 1:  # Rightmost processor
-        for i in range(u_local.size):
-            if i == u_local.size - 1:
-                # Last point uses right ghost (from first processor)
-                du_local[i] = (u_extended[-1] - u_local[i]) / dx
-            else:
-                # Other points use centered difference
-                du_local[i] = (u_local[i] - u_local[i-1]) / dx
-                
-    else:  # Interior processor
-        for i in range(u_local.size):
-            prev_val = u_extended[0] if i == 0 else u_local[i-1]
-            du_local[i] = (u_local[i] - prev_val) / dx
-    
-    return du_local
+        
+    return (u_local - np.roll(u_local,1))/dx
 
 def parallel_A_fc(u_local, comm, counts, displs):
-    """Parallel averaging operation (cell to face) with periodic boundaries."""
-    rank = comm.Get_rank()
-    size = comm.Get_size()
-    
-    # Set up periodic boundary conditions
-    left_rank = rank - 1 if rank > 0 else size - 1
-    right_rank = rank + 1 if rank < size - 1 else 0
-    
-    # Exchange ghost cells
-    u_extended = exchange_ghosts(u_local, comm, left_rank, right_rank)
-    
-    # Compute local averages exactly matching serial np.roll(-1) implementation
-    au_local = np.zeros_like(u_local)
-    
-    # For every point, average with the next point (with wraparound for last point)
-    for i in range(u_local.size):
-        next_idx = i + 1
-        
-        # If at the last element, use ghost from next processor
-        if next_idx >= u_local.size:
-            next_val = u_extended[-1]  # Ghost from right (or processor 0 if last proc)
-        else:
-            next_val = u_local[next_idx]
-            
-        au_local[i] = 0.5 * (next_val + u_local[i])
-    
-    return au_local
-
-def parallel_A_cf(u_local, comm, counts, displs):
     """Parallel averaging operation (face to cell) with periodic boundaries."""
     rank = comm.Get_rank()
     size = comm.Get_size()
     
-    # Set up periodic boundary conditions
-    left_rank = rank - 1 if rank > 0 else size - 1  # Wrap to last processor
+    left_rank  = rank - 1 if rank > 0 else size - 1
+    right_rank = rank + 1 if rank < size - 1 else 0
+    
+    u_extended = exchange_ghosts(u_local, comm, left_rank, right_rank)
+        
+    return (np.roll(u_local,-1) + u_local)/2.
+
+def parallel_A_cf(u_local, comm, counts, displs):
+    """Parallel averaging operation (cell to face) with periodic boundaries."""
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+    
+    left_rank  = rank - 1 if rank > 0 else size - 1  # Wrap to last processor
     right_rank = rank + 1 if rank < size - 1 else 0  # Wrap to first processor
     
-    # Exchange ghost cells (with periodic wrapping)
     u_extended = exchange_ghosts(u_local, comm, left_rank, right_rank)
-    
-    # Compute local averages
-    au_local = np.zeros_like(u_local)
-    
-    if rank == 0:  # Leftmost processor 
-        for i in range(u_local.size):
-            prev_val = u_extended[0] if i == 0 else u_local[i-1]
-            au_local[i] = 0.5 * (u_local[i] + prev_val)
-    
-    elif rank == size - 1:  # Rightmost processor
-        for i in range(u_local.size):
-            prev_val = u_extended[0] if i == 0 else u_local[i-1]
-            au_local[i] = 0.5 * (u_local[i] + prev_val)
-    
-    else:  # Interior processor
-        for i in range(u_local.size):
-            idx = i + 1  # Index in extended array with ghost
-            prev_val = u_extended[0] if i == 0 else u_extended[idx-1]
-            au_local[i] = 0.5 * (u_extended[idx] + prev_val)
-    
-    return au_local
+        
+    return (u_local + np.roll(u_local,1))/2.
 
 # ---- Parallel KIOPS Implementation ----
 def parallel_kiops(tau_out, A, u_local, comm, tol=1e-7, m_init=10, mmin=10, mmax=128, iop=2, task1=False):
@@ -673,14 +561,14 @@ def verification():
         Lx = grid.Lx
 
         # Test data
-        u_face = np.sin(2 * np.pi * xf / Lx)
+        u_face   = np.sin(2 * np.pi * xf / Lx)
         v_center = np.cos(2 * np.pi * xc / Lx)
 
         # Serial reference (periodic)
         def D_fc_ref(u): return (np.roll(u, -1) - u) / dx
-        def D_cf_ref(v): return (v - np.roll(v, 1)) / dx
-        def A_fc_ref(u): return 0.5 * (u + np.roll(u, -1))
-        def A_cf_ref(v): return 0.5 * (v + np.roll(v, 1))
+        def D_cf_ref(v): return (v - np.roll(v, 1) ) / dx
+        def A_fc_ref(u): return (np.roll(u, -1) + u) / 2
+        def A_cf_ref(v): return (v + np.roll(v, 1) ) / 2
 
         # Parallel evaluated (your actual operator calls)
         # Use placeholder counts/displs assuming single processor
@@ -725,11 +613,10 @@ def verification():
             if err_A_fc >= tol: print(" → A_fc failed")
             if err_A_cf >= tol: print(" → A_cf failed")
 
-
 # ---- Main Program ----
 # Define structures for parameters, grid and time
 parameters = Parameters(max_Fu = 1e-4, max_Fv = 0e-4)
-grid = Grid(Nx = 100)
+grid = Grid(Nx = 10)
 time = Time(dt = 0.05*seconds, tfinal = 0.1*hours, dt_save = 10*seconds)
 
 # Decompose domain
@@ -800,3 +687,33 @@ for i in range(time.Nt-1):
                 count += 1
             else:
                 print(f"WARNING: Exceeded allocated time dimension (count={count}, dim size={len(time.times_plot)})")
+
+
+if rank == 0:
+    file.close()
+
+    # --- Plot the solution
+    ds = nc.Dataset(file_name)
+
+    plt.clf()
+    fig, axs = plt.subplots(1, 2, figsize=(20,8))
+
+    fig.suptitle('1D Sea Ice Model with ROS2: h, A fixed')
+
+    uplt = axs[0].pcolormesh(grid.xf/km, time.times_plot/hours, ds['u']) #, vmin=-1.7, vmax=1.7)
+    vplt = axs[1].pcolormesh(grid.xc/km, time.times_plot/hours, ds['v']) #, vmin=-1.7, vmax=1.7)
+
+    axs[0].set_title('u')
+    axs[1].set_title('v')
+
+    axs[0].set_xlabel('x (km)')
+    axs[1].set_xlabel('x (km)')
+
+    axs[0].set_ylabel('time (hours)')
+    axs[1].set_ylabel('time (hours)')
+
+    fig.colorbar(uplt, ax=axs[0])
+    fig.colorbar(vplt, ax=axs[1])
+
+    fig.savefig('uv_seaice_parallel.png', format = 'png', facecolor='white')
+    print("Finished! Results saved to", file_name, "and visualization to uv_seaice_parallel.png")

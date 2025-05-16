@@ -77,10 +77,10 @@ class Solution:
     zeta:      float = field(init=False)        # center
 
 def A_fc(u):
-    return 0.5*(np.roll(u,-1) + u)
+    return (np.roll(u,-1) + u)/2
 
 def A_cf(v):
-    return 0.5*(v + np.roll(v,1))
+    return (v + np.roll(v,1))/2
 
 def D_fc(u, dx):
     return (np.roll(u,-1) - u)/dx
