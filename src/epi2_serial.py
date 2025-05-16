@@ -422,13 +422,13 @@ def matvec_fun(vec, dt, Q, rhsQ, rhs_func):
     return (dt * Jv).flatten()
 
 # --- Simple EPI2 Step (memory updating Krylov size) ---
-def epi2_step(Q, rhs_func, dt, tol=1e-7, mmin=10, mmax=64):
+def epi2_step_serial(Q, rhs_func, dt, tol=1e-7, mmin=10, mmax=64):
     """
     2nd-order EPI step using adaptive Krylov subspace.
     """
 
-    if not hasattr(epi2_step, 'krylov_size'):
-        epi2_step.krylov_size = mmin
+    if not hasattr(epi2_step_serial, 'krylov_size'):
+        epi2_step_serial.krylov_size = mmin
 
     rhsQ = rhs_func(Q)
 
@@ -438,10 +438,10 @@ def epi2_step(Q, rhs_func, dt, tol=1e-7, mmin=10, mmax=64):
     vec = np.zeros((2, rhsQ.size))
     vec[1,:] = rhsQ.flatten()
 
-    phiv, stats = kiops_serial([1.], matvec, vec, tol=tol, m_init=epi2_step.krylov_size, mmin=mmin, mmax=mmax)
+    phiv, stats = kiops_serial([1.], matvec, vec, tol=tol, m_init=epi2_step_serial.krylov_size, mmin=mmin, mmax=mmax)
 
     used_m = stats[5]
-    epi2_step.krylov_size = math.floor(0.7 * used_m + 0.3 * epi2_step.krylov_size)
+    epi2_step_serial.krylov_size = math.floor(0.7 * used_m + 0.3 * epi2_step_serial.krylov_size)
 
     deltaQ = np.reshape(phiv, Q.shape) * dt
 

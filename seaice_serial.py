@@ -16,13 +16,13 @@ from src.functions import meters, km
 from src.functions import seconds, minutes, hours, weeks
 from src.functions import create_netcdf_file
 
-from src.epi2_serial import epi2_step
+from src.epi2_serial import epi2_step_serial
 from src.epi2_serial import epi2_step_parallel
 
 # --- Define structures for parameters, grid and time
 parameters = Parameters(max_Fu = 1e-4, max_Fv = 0e-4)
 grid       = Grid(Nx = 100)
-time       = Time(dt = 0.05*seconds, tfinal = 0.1*hours, dt_save = 10*seconds)
+time       = Time(dt = 0.05*seconds, tfinal = seconds, dt_save = 0.05*seconds)
 
 # --- Define the RHS of the PDEs
 def rhs(Q):
