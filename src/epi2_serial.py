@@ -40,6 +40,12 @@ def kiops_serial(tau_out, A, u, tol=1e-7, m_init=10, mmin=10, mmax=128, iop=2, t
 
     normU = np.max(np.sum(np.abs(u[1:, :]), axis=1))
 
+    #print("norm U = ", normU)
+    #print("u      = ", u)
+
+    #import sys
+    #sys.exit()
+
     if ppo > 1 and normU > 0:
         ex = math.ceil(math.log2(normU))
         nu = 2**(-ex)

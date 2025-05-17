@@ -31,7 +31,7 @@ class Parameters:
 class Grid:
     """Class for storing the grid parameters."""
     Lx:        float = 100*km
-    Nx:        int   = 50
+    Nx:        int   = 10
     dx:        float = Lx/Nx
     
     xf:        float = field(init=False)

@@ -33,20 +33,20 @@ weeks   = 7.0  * days
 # Define Parameter, Grid, and Time classes
 class Parameters:
     def __init__(self, max_Fu=1e-4, max_Fv=0e-4):
-        self.P_star = 27.5e3            # Pa
-        self.e = 2                       # []
-        self.C0 = 20                     # []
-        self.Delta_ref = 1e-11           # []
-        self.f = 1.46e-4                 # 1/s, Coriolis parameter
-        self.r = 1e-3                    # 1/s, Damping parameter
-        self.rho_i = 900                 # kg/m^3
+        self.P_star = 2.7e4              # Pa
+        self.e = 2.                      # []
+        self.C0 = 20.                    # []
+        self.Delta_ref = 2e-9            # []
+        self.f = 7e-5                    # 1/s, Coriolis parameter
+        self.r = 0e-3                    # 1/s, Damping parameter
+        self.rho_i = 917                 # kg/m^3
         self.max_Fu = max_Fu
         self.max_Fv = max_Fv
 
 class Grid:
     def __init__(self, Nx=100):
         self.Nx = Nx
-        self.Lx = 1000.0 * km
+        self.Lx = 100.0 * km
         self.dx = self.Lx / self.Nx
         self.xc = np.arange(self.dx/2.0, self.Lx, self.dx)
         self.xf = np.arange(0, self.Lx, self.dx)
@@ -178,13 +178,13 @@ def kiops_mpi(tau_out, A, u_local, comm, tol=1e-7, m_init=10, mmin=10, mmax=128,
         u_local = np.row_stack((u_local, np.zeros(n_local)))
     
     # Get global size via reduction
-    n_global = comm.allreduce(n_local, op=MPI.SUM)
+    #n_global = comm.allreduce(n_local, op=MPI.SUM)
     
     m = max(mmin, min(m_init, mmax))
     
     # Create local storage
     V_local = np.zeros((mmax+1, n_local+p))
-    H = np.zeros((mmax+1, mmax+1))
+    H       = np.zeros((mmax+1, mmax+1))
     
     step = 0
     krystep = 0
@@ -206,6 +206,14 @@ def kiops_mpi(tau_out, A, u_local, comm, tol=1e-7, m_init=10, mmin=10, mmax=128,
     local_normU = np.max(np.sum(np.abs(u_local[1:, :]), axis=1)) if u_local.shape[0] > 1 else 0
     global_normU = comm.allreduce(local_normU, op=MPI.MAX)
     
+    global_u = comm.allreduce(u_local, op=MPI.MAX)
+
+    #print("global_normU = ", global_normU)
+    #print("global u     = ", global_u)
+
+    #import sys
+    #sys.exit()
+
     if ppo > 1 and global_normU > 0:
         ex = math.ceil(math.log2(global_normU))
         nu = 2**(-ex)
@@ -448,7 +456,7 @@ def epi2_step_mpi(Q_local, rhs_func_local, dt, comm, counts, displs, tol=1e-7, m
     return np.real(Q_local + deltaQ_local)  # <-- Add np.real here
 
 # ---- Define parallel RHS function ----
-def rhs_parallel(Q_local, comm, counts, displs):
+def rhs_mpi(Q_local, comm, counts, displs):
     """Parallel version of RHS function with domain decomposition."""
     # Ensure Q_local is real if we might be getting complex values
     Q_local = np.real(Q_local)  # <-- Add this conversion
@@ -460,14 +468,16 @@ def rhs_parallel(Q_local, comm, counts, displs):
     Nx_local = counts[rank]
     
     # Get global parameters from serial code
-    P_star = parameters.P_star
-    e = parameters.e
-    C0 = parameters.C0
+    P_star    = parameters.P_star
+    e         = parameters.e
+    C0        = parameters.C0
     Delta_ref = parameters.Delta_ref
-    f = parameters.f
-    r = parameters.r
-    rho_i = parameters.rho_i
-    dx = grid.dx
+
+    f         = parameters.f
+    r         = parameters.r
+
+    rho_i     = parameters.rho_i
+    dx        = grid.dx
     
     # Split local Q into u and v
     u_local = Q_local[0:Nx_local]
@@ -508,39 +518,6 @@ def rhs_parallel(Q_local, comm, counts, displs):
     
     # Combine results
     return np.hstack((du_local, dv_local))
-
-def serial_rhs(Q):
-    from src.functions import A_fc, A_cf, D_fc, D_cf
-    from src.functions import Parameters, Grid, Time
-    Nx, dx = grid.Nx, grid.dx
-    
-    P_star    = parameters.P_star
-    e         = parameters.e
-    C0        = parameters.C0
-    Delta_ref = parameters.Delta_ref
-
-    f     = parameters.f
-    r     = parameters.r
-    rho_i = parameters.rho_i
-    
-    h0, A0 = np.ones(grid.Nx), np.ones(grid.Nx)
-    u  = Q[0:Nx]
-    v  = Q[Nx:2*Nx]
-    h  = h0
-    A  = A0
-    pdb.set_trace()
-    Delta = np.sqrt(1.25*A_fc(D_fc(u, dx))**2 + D_cf(v, dx)**2) + parameters.Delta_ref*1e-2 
-    Pp    = h*P_star*e**(C0*(A - 1))
-    zeta  = A_cf(Pp)/(2*Delta_ref)*np.tanh(Delta_ref/A_cf(Delta))
-
-    # --- Pick forcing
-    Fu = np.sin(2*np.pi*grid.xf/grid.Lx) * parameters.max_Fu 
-    Fv = np.cos(2*np.pi*grid.xc/grid.Lx) * parameters.max_Fv 
-            
-    du = (D_cf((1.25*D_fc(u, dx) - Delta) * zeta, dx))/(rho_i*A_cf(h)) + f*A_cf(v) - r*u + Fu
-    dv = (D_fc((D_cf(v, dx) * A_cf(zeta)), dx))/(rho_i*h )             - f*A_fc(u) - r*v + Fv 
-
-    return np.hstack((du, dv))  
 
 def verification():
     """
@@ -642,7 +619,7 @@ def rhs_serial(Q):
     du = (D_cf((1.25*D_fc(u, dx) - Delta) * zeta, dx))/(rho_i*A_cf(h)) + f*A_cf(v) - r*u + Fu
     dv = (D_fc((D_cf(v, dx) * A_cf(zeta)), dx))/(rho_i*h )             - f*A_fc(u) - r*v + Fv 
 
-    return np.hstack((du, dv)), Delta, Pp, zeta  
+    return np.hstack((du, dv))#, Delta, Pp, zeta  
 
 
 # ---- Main Program ----
@@ -664,13 +641,13 @@ xf_local      = grid.xf[local_indices] if Nx_local > 0 else np.array([])
 u0_local, v0_local = np.zeros(Nx_local), np.zeros(Nx_local)
 h0_local, A0_local = np.ones(Nx_local),  np.ones(Nx_local)
 
-# Local forcing terms
-Fu_local = np.sin(2*np.pi*xf_local/grid.Lx) * parameters.max_Fu if Nx_local > 0 else np.array([])
-Fv_local = np.cos(2*np.pi*xc_local/grid.Lx) * parameters.max_Fv if Nx_local > 0 else np.array([])
-
 # Combined local solution vector
 Q0_local = np.hstack((u0_local, v0_local))
 Q_local  = Q0_local.copy()
+
+# Local forcing terms
+Fu_local = np.sin(2*np.pi*xf_local/grid.Lx) * parameters.max_Fu if Nx_local > 0 else np.array([])
+Fv_local = np.cos(2*np.pi*xc_local/grid.Lx) * parameters.max_Fv if Nx_local > 0 else np.array([])
 
 # Create output file (rank 0 only)
 if rank == 0:
@@ -695,9 +672,9 @@ if rank==0:
     Fu = np.sin(2*np.pi*grid.xf/grid.Lx) * parameters.max_Fu 
     Fv = np.cos(2*np.pi*grid.xc/grid.Lx) * parameters.max_Fv 
 
-    Q, Delta, Pp, zeta = rhs_serial(Q0)
+    Q = rhs_serial(Q0)
 
-Q_local = rhs_parallel(Q0_local, comm, counts, displs)
+Q_local = rhs_mpi(Q0_local, comm, counts, displs)
 
 def max_err(a, b): return np.max(np.abs(a - b))
 
@@ -705,7 +682,6 @@ if rank==0:
     err_rhs = max_err(Q_local, Q)
     tol = 1e-12
     passed = all(err < tol for err in [err_rhs])
-
     print(f"🔬 max |rhs_mpi - rhs_serial| = {err_rhs:.2e}")
 
     if passed:
@@ -713,15 +689,34 @@ if rank==0:
     else:
         print(" → rhs failed")
 
-import sys
-sys.exit()
+#import sys
+#sys.exit()
 
 # Time stepping loop
 count = 1
 for i in range(time.Nt-1):
     # Take parallel EPI2 step
-    Q_local = epi2_step_mpi(Q_local, rhs_parallel, time.dt, comm, counts, displs)
+
+    if rank==0:
+        Q = epi2_step_serial(Q0, rhs_serial, time.dt, tol=1e-7, mmin=10, mmax=64)
+
+    Q_local = epi2_step_mpi(Q0_local, rhs_mpi, time.dt, comm, counts, displs)
     
+    if rank==0:
+        err_epi2 = max_err(Q_local, Q)
+        tol = 1e-12
+        passed = all(err < tol for err in [err_rhs])
+        print(f"🔬 max |epi2_mpi - epi2_serial| = {err_epi2:.2e}")
+
+        if passed:
+            print("✅ EPI2 operators match serial references (within tolerance).")
+        else:
+            print(" → EPI2 failed")
+
+        import sys
+        sys.exit()
+        
+
     # Save data (gather to rank 0) - FIXED SAVE CONDITION
     if np.remainder(i, time.freq_save) == 0:  # <-- REMOVED the -1
         # Gather u and v to rank 0

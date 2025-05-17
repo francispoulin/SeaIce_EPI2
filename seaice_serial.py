@@ -17,11 +17,11 @@ from src.functions import seconds, minutes, hours, weeks
 from src.functions import create_netcdf_file
 
 from src.epi2_serial import epi2_step_serial
-from src.epi2_serial import epi2_step_parallel
+#from src.epi2_serial import epi2_step_parallel
 
 # --- Define structures for parameters, grid and time
 parameters = Parameters(max_Fu = 1e-4, max_Fv = 0e-4)
-grid       = Grid(Nx = 100)
+grid       = Grid(Nx = 10)
 time       = Time(dt = 0.05*seconds, tfinal = seconds, dt_save = 0.05*seconds)
 
 # --- Define the RHS of the PDEs
@@ -45,9 +45,25 @@ def rhs(Q):
     Delta = np.sqrt(1.25*A_fc(D_fc(u, dx))**2 + D_cf(v, dx)**2) + parameters.Delta_ref*1e-2 
     Pp    = h*P_star*e**(C0*(A - 1))
     zeta  = A_cf(Pp)/(2*Delta_ref)*np.tanh(Delta_ref/A_cf(Delta))
-            
+
+    print("Delta = ", Delta)
+    print("Pp    = ", Pp)
+    print("zeta  = ", zeta)
+
     du = (D_cf((1.25*D_fc(u, dx) - Delta) * zeta, dx))/(rho_i*A_cf(h)) + f*A_cf(v) - r*u + Fu
     dv = (D_fc((D_cf(v, dx) * A_cf(zeta)), dx))/(rho_i*h )             - f*A_fc(u) - r*v + Fv 
+
+    print("du = ", du)
+    print("dv = ", dv)
+
+    print("Lx = ", grid.Lx)
+    print("dx = ", grid.dx)
+    print("xf = ", grid.xf)
+    print("xc = ", grid.xc)
+
+    print("Fu_max and Fv_max = ", parameters.max_Fu, parameters.max_Fv)
+    print("Fu = ", Fu)
+    print("Fv = ", Fv)
 
     return np.hstack((du, dv))  
 
@@ -74,8 +90,10 @@ count = 1
 for i in range(time.Nt-1):
     
     # Use the parallel version with MPI
-    Q = epi2_step_parallel(Q, rhs, time.dt, comm=comm)
-
+    #Q = epi2_step_parallel(Q, rhs, time.dt, comm=comm)
+    #Q = epi2_step_parallel(Q, rhs, time.dt, comm=comm)
+    print("Q0 = ", Q0)
+    Q = epi2_step_serial(Q0, rhs, time.dt, tol=1e-7, mmin=10, mmax=64)
     # --- Save data (only on rank 0)
     if rank == 0 and np.remainder(i, (time.freq_save-1)) == 0:
         print('t = {:6.2f} hours, max_u = {:10.8f}, max_v = {:10.8f}'.format(i*time.dt/hours, 
