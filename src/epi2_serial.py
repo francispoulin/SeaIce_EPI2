@@ -40,12 +40,6 @@ def kiops_serial(tau_out, A, u, tol=1e-7, m_init=10, mmin=10, mmax=128, iop=2, t
 
     normU = np.max(np.sum(np.abs(u[1:, :]), axis=1))
 
-    #print("norm U = ", normU)
-    #print("u      = ", u)
-
-    #import sys
-    #sys.exit()
-
     if ppo > 1 and normU > 0:
         ex = math.ceil(math.log2(normU))
         nu = 2**(-ex)
@@ -84,9 +78,9 @@ def kiops_serial(tau_out, A, u, tol=1e-7, m_init=10, mmin=10, mmax=128, iop=2, t
                 V[j, n+k] = (tau_now**i)/math.factorial(i) * mu
             V[j, n+p-1] = mu
 
-            beta = math.sqrt(np.dot(V[0, 0:n], V[0, 0:n]) + np.dot(V[j, n:n+p], V[j, n:n+p]))
+            beta = math.sqrt(np.dot(V[0, 0:n], V[0, 0:n]) + np.dot(V[0, n:n+p], V[0, n:n+p]))
             V[j, :] /= beta
-
+            
         while j < m:
             j += 1
 
@@ -95,6 +89,7 @@ def kiops_serial(tau_out, A, u, tol=1e-7, m_init=10, mmin=10, mmax=128, iop=2, t
             V[j, n+p-1] = 0.0
 
             ilow = max(0, j-iop)
+
             H[ilow:j, j-1] = np.dot(V[ilow:j, 0:n], V[j, 0:n]) + np.dot(V[ilow:j, n:n+p], V[j, n:n+p])
 
             V[j, :] -= np.dot(V[ilow:j, :].T, H[ilow:j, j-1])
@@ -420,10 +415,12 @@ def kiops_parallel(tau_out, A, u, comm, tol=1e-7, m_init=10, mmin=10, mmax=128, 
 
     return w, stats    
 
+import sys
+
 # --- Matvec Function (complex step) ---
-def matvec_fun(vec, dt, Q, rhsQ, rhs_func):
+def matvec_fun(v, dt, Q, rhsQ, rhs_func):
     epsilon = math.sqrt(np.finfo(float).eps)
-    perturbed = Q + 1j * epsilon * vec.reshape(Q.shape)
+    perturbed = Q + 1j * epsilon * v.reshape(Q.shape)
     Jv = (rhs_func(perturbed).imag) / epsilon
     return (dt * Jv).flatten()
 
@@ -444,7 +441,9 @@ def epi2_step_serial(Q, rhs_func, dt, tol=1e-7, mmin=10, mmax=64):
     vec = np.zeros((2, rhsQ.size))
     vec[1,:] = rhsQ.flatten()
 
-    phiv, stats = kiops_serial([1.], matvec, vec, tol=tol, m_init=epi2_step_serial.krylov_size, mmin=mmin, mmax=mmax)
+    phiv, stats = kiops_serial([1.], matvec, vec, 
+                                    tol=tol, m_init=epi2_step_serial.krylov_size, 
+                                    mmin=mmin, mmax=mmax)
 
     used_m = stats[5]
     epi2_step_serial.krylov_size = math.floor(0.7 * used_m + 0.3 * epi2_step_serial.krylov_size)

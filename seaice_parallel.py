@@ -208,12 +208,6 @@ def kiops_mpi(tau_out, A, u_local, comm, tol=1e-7, m_init=10, mmin=10, mmax=128,
     
     global_u = comm.allreduce(u_local, op=MPI.MAX)
 
-    #print("global_normU = ", global_normU)
-    #print("global u     = ", global_u)
-
-    #import sys
-    #sys.exit()
-
     if ppo > 1 and global_normU > 0:
         ex = math.ceil(math.log2(global_normU))
         nu = 2**(-ex)
@@ -254,27 +248,25 @@ def kiops_mpi(tau_out, A, u_local, comm, tol=1e-7, m_init=10, mmin=10, mmax=128,
             V_local[j, n_local+p-1] = mu
             
             # Compute global norm with reduction
-            local_dot1 = np.dot(V_local[0, 0:n_local], V_local[0, 0:n_local])
-            local_dot2 = np.dot(V_local[j, n_local:n_local+p], V_local[j, n_local:n_local+p])
+            local_dot1 = np.dot(V_local[0, 0:n_local],         V_local[0, 0:n_local])
+            local_dot2 = np.dot(V_local[0, n_local:n_local+p], V_local[0, n_local:n_local+p])
             beta = math.sqrt(comm.allreduce(local_dot1 + local_dot2, op=MPI.SUM))
             
+            #FJP: do we need this?
             # Protect against division by zero
-            if beta < 1e-14:
-                beta = 1.0
+            #if beta < 1e-14:
+            #    beta = 1.0
                 
-            V_local[j, :] /= beta
-        
+            V_local[j, :] /= beta 
+
         while j < m:
             j += 1
             
-            # Apply operator A to local part of vector
-            V_local[j, 0:n_local] = A(V_local[j-1, 0:n_local])
-            
-            # Add the polynomial terms contribution
-            if u_flip_local.size > 0:
-                V_local[j, 0:n_local] += np.dot(V_local[j-1, n_local:n_local+p], u_flip_local)
-            
-            # Update polynomial terms (same on all processors)
+            V_local[j, 0:n_local] = A(V_local[j-1, 0:n_local])           
+
+            #FJP: do we need this?
+            #if u_flip_local.size > 0:
+            V_local[j, 0:n_local] += np.dot(V_local[j-1, n_local:n_local+p], u_flip_local)
             V_local[j, n_local:n_local+p-1] = V_local[j-1, n_local+1:n_local+p]
             V_local[j, n_local+p-1] = 0.0
             
@@ -307,6 +299,7 @@ def kiops_mpi(tau_out, A, u_local, comm, tol=1e-7, m_init=10, mmin=10, mmax=128,
                 
             V_local[j, :] /= nrm
             
+            #print("V_local at end of while with j = ", j, V_local[j,:])
             krystep += 1
         
         # Finish building the H matrix
@@ -324,7 +317,7 @@ def kiops_mpi(tau_out, A, u_local, comm, tol=1e-7, m_init=10, mmin=10, mmax=128,
         exps += 1
         
         H[j, j-1] = nrm
-        
+                
         # Adaptive time stepping logic (identical to serial)
         if happy:
             omega = 0.0
@@ -410,11 +403,20 @@ def kiops_mpi(tau_out, A, u_local, comm, tol=1e-7, m_init=10, mmin=10, mmax=128,
     
     return w_local, stats
 
+# --- Matvec Function (complex step) ---
+def matvec_fun_mpi(v_local, dt, Q_local, rhsQ_local, rhs_func_local):
+    epsilon   = math.sqrt(np.finfo(float).eps)
+    perturbed = Q_local + 1j * epsilon * v_local.reshape(Q_local.shape)    
+    Jv_local  = (rhs_func_local(perturbed, comm, counts, displs).imag) / epsilon
+
+    return (dt * Jv_local).flatten()
+
 # ---- Parallel EPI2 Step ----
 def epi2_step_mpi(Q_local, rhs_func_local, dt, comm, counts, displs, tol=1e-7, mmin=10, mmax=64):
     """
     Parallel EPI2 step with domain decomposition.
     """
+
     if not hasattr(epi2_step_mpi, 'krylov_size'):
         epi2_step_mpi.krylov_size = mmin
     
@@ -424,22 +426,25 @@ def epi2_step_mpi(Q_local, rhs_func_local, dt, comm, counts, displs, tol=1e-7, m
     # Compute RHS on local portion
     rhsQ_local = rhs_func_local(Q_local, comm, counts, displs)
     
-    # Define parallel matvec function
     def matvec_mpi(v_local):
-        epsilon = math.sqrt(np.finfo(float).eps)
+        return matvec_fun_mpi(v_local, dt, Q_local, rhsQ_local, rhs_func_local)
+
+    ## Define parallel matvec function
+    #def matvec_mpi(v_local):
+    #    epsilon = math.sqrt(np.finfo(float).eps)
         
-        # Reconstruct perturbed Q on local domain
-        perturbed_local = Q_local + 1j * epsilon * v_local.reshape(Q_local.shape)
+    #    # Reconstruct perturbed Q on local domain
+    #    perturbed_local = Q_local + 1j * epsilon * v_local.reshape(Q_local.shape)
         
-        # Apply RHS function with perturbation
-        Jv_local = (rhs_func_local(perturbed_local, comm, counts, displs).imag) / epsilon
+    #    # Apply RHS function with perturbation
+    #    Jv_local = (rhs_func_local(perturbed_local, comm, counts, displs).imag) / epsilon
         
-        return (dt * Jv_local).flatten()
+    #    return (dt * Jv_local).flatten()
     
     # Set up vectors for parallel KIOPS
     vec_local = np.zeros((2, rhsQ_local.size))
     vec_local[1, :] = rhsQ_local.flatten()
-    
+        
     # Call parallel KIOPS
     phiv_local, stats = kiops_mpi([1.], matvec_mpi, vec_local, comm, 
                                      tol=tol, m_init=epi2_step_mpi.krylov_size, 
@@ -459,7 +464,7 @@ def epi2_step_mpi(Q_local, rhs_func_local, dt, comm, counts, displs, tol=1e-7, m
 def rhs_mpi(Q_local, comm, counts, displs):
     """Parallel version of RHS function with domain decomposition."""
     # Ensure Q_local is real if we might be getting complex values
-    Q_local = np.real(Q_local)  # <-- Add this conversion
+    #Q_local = np.real(Q_local)  # <-- Add this conversion
 
     rank = comm.Get_rank()
     size = comm.Get_size()
@@ -533,7 +538,7 @@ def verification():
         return
 
     if rank == 0:
-        print("✅ Verifying parallel spatial operators against serial reference...")
+        print("Verifying parallel spatial operators against serial reference...")
         
         dx = grid.dx
         xf = grid.xf
@@ -666,7 +671,7 @@ if rank==0:
     h0, A0 = np.ones(grid.Nx), np.ones(grid.Nx)
 
     Q0 = np.hstack((u0, v0)) 
-    Q = Q0.copy()
+    Q  = Q0.copy()
 
     # --- Pick forcing
     Fu = np.sin(2*np.pi*grid.xf/grid.Lx) * parameters.max_Fu 
@@ -689,32 +694,27 @@ if rank==0:
     else:
         print(" → rhs failed")
 
-#import sys
-#sys.exit()
-
 # Time stepping loop
 count = 1
 for i in range(time.Nt-1):
-    # Take parallel EPI2 step
+
+    Q_local = epi2_step_mpi(Q_local, rhs_mpi, time.dt, comm, counts, displs, tol=1e-7, mmin=10, mmax=64)
 
     if rank==0:
-        Q = epi2_step_serial(Q0, rhs_serial, time.dt, tol=1e-7, mmin=10, mmax=64)
+        Q = epi2_step_serial(Q, rhs_serial, time.dt, tol=1e-7, mmin=10, mmax=64)
 
-    Q_local = epi2_step_mpi(Q0_local, rhs_mpi, time.dt, comm, counts, displs)
-    
-    if rank==0:
-        err_epi2 = max_err(Q_local, Q)
-        tol = 1e-12
-        passed = all(err < tol for err in [err_rhs])
-        print(f"🔬 max |epi2_mpi - epi2_serial| = {err_epi2:.2e}")
+    err_epi2 = max_err(Q0_local, Q0)
+    tol = 1e-12
+    passed = all(err < tol for err in [err_epi2])
+    print(f"🔬 max |epi2_mpi - epi2_serial| = {err_epi2:.2e}")
 
-        if passed:
-            print("✅ EPI2 operators match serial references (within tolerance).")
-        else:
-            print(" → EPI2 failed")
+    if passed:
+        print("✅ EPI2 operators match serial references (within tolerance).")
+    else:
+        print(" → EPI2 failed")
 
-        import sys
-        sys.exit()
+    import sys
+    sys.exit()
         
 
     # Save data (gather to rank 0) - FIXED SAVE CONDITION

@@ -21,7 +21,7 @@ from src.epi2_serial import epi2_step_serial
 
 # --- Define structures for parameters, grid and time
 parameters = Parameters(max_Fu = 1e-4, max_Fv = 0e-4)
-grid       = Grid(Nx = 10)
+grid       = Grid(Nx = 10, Lx = 100*km)
 time       = Time(dt = 0.05*seconds, tfinal = seconds, dt_save = 0.05*seconds)
 
 # --- Define the RHS of the PDEs
@@ -46,24 +46,8 @@ def rhs(Q):
     Pp    = h*P_star*e**(C0*(A - 1))
     zeta  = A_cf(Pp)/(2*Delta_ref)*np.tanh(Delta_ref/A_cf(Delta))
 
-    print("Delta = ", Delta)
-    print("Pp    = ", Pp)
-    print("zeta  = ", zeta)
-
     du = (D_cf((1.25*D_fc(u, dx) - Delta) * zeta, dx))/(rho_i*A_cf(h)) + f*A_cf(v) - r*u + Fu
     dv = (D_fc((D_cf(v, dx) * A_cf(zeta)), dx))/(rho_i*h )             - f*A_fc(u) - r*v + Fv 
-
-    print("du = ", du)
-    print("dv = ", dv)
-
-    print("Lx = ", grid.Lx)
-    print("dx = ", grid.dx)
-    print("xf = ", grid.xf)
-    print("xc = ", grid.xc)
-
-    print("Fu_max and Fv_max = ", parameters.max_Fu, parameters.max_Fv)
-    print("Fu = ", Fu)
-    print("Fv = ", Fv)
 
     return np.hstack((du, dv))  
 
