@@ -666,6 +666,8 @@ verification()
 #FJP compare serial and parallel (1 core)
 # --- Initial Conditions
 
+def max_err(a, b): return np.max(np.abs(a - b))
+
 if rank==0:
     u0, v0 = np.zeros(grid.Nx), np.zeros(grid.Nx)
     h0, A0 = np.ones(grid.Nx), np.ones(grid.Nx)
@@ -677,14 +679,12 @@ if rank==0:
     Fu = np.sin(2*np.pi*grid.xf/grid.Lx) * parameters.max_Fu 
     Fv = np.cos(2*np.pi*grid.xc/grid.Lx) * parameters.max_Fv 
 
-    Q = rhs_serial(Q0)
+    rhstest = rhs_serial(Q0)
 
-Q_local = rhs_mpi(Q0_local, comm, counts, displs)
-
-def max_err(a, b): return np.max(np.abs(a - b))
+rhstest_local = rhs_mpi(Q0_local, comm, counts, displs)
 
 if rank==0:
-    err_rhs = max_err(Q_local, Q)
+    err_rhs = max_err(rhstest_local, rhstest)
     tol = 1e-12
     passed = all(err < tol for err in [err_rhs])
     print(f"🔬 max |rhs_mpi - rhs_serial| = {err_rhs:.2e}")
@@ -694,16 +694,12 @@ if rank==0:
     else:
         print(" → rhs failed")
 
-# Time stepping loop
-count = 1
-for i in range(time.Nt-1):
+Qtest_local = epi2_step_mpi(Q0_local, rhs_mpi, time.dt, comm, counts, displs, tol=1e-7, mmin=10, mmax=64)
+if rank==0:
 
-    Q_local = epi2_step_mpi(Q_local, rhs_mpi, time.dt, comm, counts, displs, tol=1e-7, mmin=10, mmax=64)
+    Qtest = epi2_step_serial(Q0, rhs_serial, time.dt, tol=1e-7, mmin=10, mmax=64)
 
-    if rank==0:
-        Q = epi2_step_serial(Q, rhs_serial, time.dt, tol=1e-7, mmin=10, mmax=64)
-
-    err_epi2 = max_err(Q0_local, Q0)
+    err_epi2 = max_err(Qtest_local, Qtest)
     tol = 1e-12
     passed = all(err < tol for err in [err_epi2])
     print(f"🔬 max |epi2_mpi - epi2_serial| = {err_epi2:.2e}")
@@ -713,9 +709,13 @@ for i in range(time.Nt-1):
     else:
         print(" → EPI2 failed")
 
-    import sys
-    sys.exit()
-        
+# Time stepping loop
+count = 1
+
+Q_local = Q0_local
+for i in range(time.Nt-1):
+
+    Q_local = epi2_step_mpi(Q_local, rhs_mpi, time.dt, comm, counts, displs, tol=1e-7, mmin=10, mmax=64)
 
     # Save data (gather to rank 0) - FIXED SAVE CONDITION
     if np.remainder(i, time.freq_save) == 0:  # <-- REMOVED the -1
