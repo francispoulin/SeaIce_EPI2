@@ -668,7 +668,7 @@ verification()
 
 def max_err(a, b): return np.max(np.abs(a - b))
 
-if rank==0:
+if size==1:
     u0, v0 = np.zeros(grid.Nx), np.zeros(grid.Nx)
     h0, A0 = np.ones(grid.Nx), np.ones(grid.Nx)
 
@@ -683,7 +683,7 @@ if rank==0:
 
 rhstest_local = rhs_mpi(Q0_local, comm, counts, displs)
 
-if rank==0:
+if size==1:
     err_rhs = max_err(rhstest_local, rhstest)
     tol = 1e-12
     passed = all(err < tol for err in [err_rhs])
@@ -694,9 +694,8 @@ if rank==0:
     else:
         print(" → rhs failed")
 
-Qtest_local = epi2_step_mpi(Q0_local, rhs_mpi, time.dt, comm, counts, displs, tol=1e-7, mmin=10, mmax=64)
-if rank==0:
-
+if size==1:
+    Qtest_local = epi2_step_mpi(Q0_local, rhs_mpi, time.dt, comm, counts, displs, tol=1e-7, mmin=10, mmax=64)
     Qtest = epi2_step_serial(Q0, rhs_serial, time.dt, tol=1e-7, mmin=10, mmax=64)
 
     err_epi2 = max_err(Qtest_local, Qtest)
@@ -713,9 +712,17 @@ if rank==0:
 count = 1
 
 Q_local = Q0_local
+if rank == 0:
+    u0, v0 = np.zeros(grid.Nx), np.zeros(grid.Nx)
+    Q0 = np.hstack((u0, v0)) 
+    Q = Q0
+
 for i in range(time.Nt-1):
 
     Q_local = epi2_step_mpi(Q_local, rhs_mpi, time.dt, comm, counts, displs, tol=1e-7, mmin=10, mmax=64)
+
+    if rank==0:
+        Q = epi2_step_serial(Q, rhs_serial, time.dt, tol=1e-7, mmin=10, mmax=64)
 
     # Save data (gather to rank 0) - FIXED SAVE CONDITION
     if np.remainder(i, time.freq_save) == 0:  # <-- REMOVED the -1
@@ -726,17 +733,20 @@ for i in range(time.Nt-1):
         
         if rank == 0:
             u_gathered, v_gathered = np.zeros(grid.Nx), np.zeros(grid.Nx)
-        
+            u, v = Q[:grid.Nx], Q[grid.Nx:2*grid.Nx]
+
         # Gather data to rank 0
         comm.Gatherv(u_local, [u_gathered, counts, displs, MPI.DOUBLE], root=0)
         comm.Gatherv(v_local, [v_gathered, counts, displs, MPI.DOUBLE], root=0)
         
         # Rank 0 saves to file (with bounds check)
-        if rank == 0:
+        if rank == 0: 
             print('t = {:6.2f} hours, max_u = {:10.8f}, max_v = {:10.8f}'.format(i*time.dt/hours, 
                   np.max(u_gathered), np.max(v_gathered)))
+            print('                  max_u = {:10.8f}, max_v = {:10.8f}'.format( 
+                  np.max(u), np.max(v)))
             
-            # Add safety bounds check
+           # Add safety bounds check
             if count < len(time.times_plot):
                 u_global[count,:] = u_gathered
                 v_global[count,:] = v_gathered
